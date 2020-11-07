@@ -332,9 +332,11 @@ class QuarkusCxfProcessor {
         StringBuilder b = new StringBuilder();
         b.append(setters.size()).append(':');
         for (int x = 0; x < setters.size(); x++) {
-            if (getters.get(x) == null) {
+            MethodDescriptor getMethodDesc = getters.get(x);
+            if (getMethodDesc == null) {
                 b.append("null,");
             } else {
+                //convert MethodDescriptor.getReturnType() format to Method.getReturnType().getName() format
                 b.append(getters.get(x).getName()).append('/');
                 b.append(formatType(getters.get(x).getReturnType())).append(',');
             }
@@ -343,18 +345,19 @@ class QuarkusCxfProcessor {
     }
 
     private String formatType(String str) {
-        // overt jvn descriptor to class name
+        // convert jvm descriptor to class name
         if (str == null) {
             return null;
         }
         if (str.length() == 1) {
+            //TODO check char, int and void (wich must never happend)
             switch (str) {
                 case "V":
                     return "void";
                 case "B":
                     return "byte";
                 case "C":
-                    return "character";
+                    return "char";
                 case "D":
                     return "double";
                 case "Z":
@@ -364,7 +367,7 @@ class QuarkusCxfProcessor {
                 case "J":
                     return "long";
                 case "I":
-                    return "integer";
+                    return "int";
                 case "F":
                     return "float";
             }
