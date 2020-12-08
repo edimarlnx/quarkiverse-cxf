@@ -41,7 +41,7 @@ import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.web.RoutingContext;
 
 public class VertxHttpServletRequest implements HttpServletRequest {
-    private static final Logger LOG = Logger.getLogger(CxfHandler.class);
+    private static final Logger LOG = Logger.getLogger(VertxHttpServletRequest.class);
     protected final RoutingContext context;
     private VertxInputStream in;
     private HttpServerRequest request;

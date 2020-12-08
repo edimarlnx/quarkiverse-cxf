@@ -136,6 +136,7 @@ public class CXFRecorder {
     }
 
     public Handler<RoutingContext> initServer(RuntimeValue<CXFServletInfos> infos) {
+        LOGGER.info("init server");
         return new CxfHandler(infos.getValue());
     }
 }

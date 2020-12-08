@@ -6,14 +6,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import javax.inject.Singleton;
-
 import org.jboss.logging.Logger;
 
-import io.quarkus.arc.Unremovable;
-
-@Singleton
-@Unremovable
 public class CXFServletInfos {
 
     private final List<CXFServletInfo> infos;

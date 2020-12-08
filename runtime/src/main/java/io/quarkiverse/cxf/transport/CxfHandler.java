@@ -3,12 +3,12 @@ package io.quarkiverse.cxf.transport;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.cxf.Bus;
-import org.apache.cxf.BusException;
 import org.apache.cxf.BusFactory;
 import org.apache.cxf.common.classloader.ClassLoaderUtils;
 import org.apache.cxf.common.util.StringUtils;
@@ -17,10 +17,14 @@ import org.apache.cxf.feature.Feature;
 import org.apache.cxf.interceptor.Interceptor;
 import org.apache.cxf.jaxws.JaxWsServerFactoryBean;
 import org.apache.cxf.message.Message;
-import org.apache.cxf.resource.ResourceManager;
+import org.apache.cxf.service.model.EndpointInfo;
+import org.apache.cxf.transport.ConduitInitiatorManager;
+import org.apache.cxf.transport.Destination;
 import org.apache.cxf.transport.DestinationFactoryManager;
 import org.apache.cxf.transport.http.AbstractHTTPDestination;
 import org.apache.cxf.transport.http.DestinationRegistry;
+import org.apache.cxf.transport.http.DestinationRegistryImpl;
+import org.apache.cxf.transport.http.HttpDestinationFactory;
 import org.apache.cxf.transport.servlet.BaseUrlHelper;
 import org.jboss.logging.Logger;
 
@@ -39,7 +43,6 @@ public class CxfHandler implements Handler<RoutingContext> {
     private Bus bus;
     private ClassLoader loader;
     private DestinationRegistry destinationRegistry;
-    private boolean loadBus;
     protected String serviceListRelativePath = "/services";
 
     private static final Map<String, String> RESPONSE_HEADERS = new HashMap<>();
@@ -52,20 +55,35 @@ public class CxfHandler implements Handler<RoutingContext> {
         RESPONSE_HEADERS.put("Access-Control-Max-Age", "86400");
     }
 
+    private VertxDestinationFactory destinationFactory;
+
     public CxfHandler() {
-        loadBus = false;
     }
 
     public CxfHandler(CXFServletInfos cxfServletInfos) {
+        LOGGER.info("CxfHandler created");
         if (cxfServletInfos == null || cxfServletInfos.getInfos() == null || cxfServletInfos.getInfos().isEmpty()) {
             LOGGER.warn("no info transmit to servlet");
             return;
         }
-        Bus bus = getBus();
+        this.bus = BusFactory.getDefaultBus();
         BusFactory.setDefaultBus(bus);
+        this.loader = this.bus.getExtension(ClassLoader.class);
+
+        LOGGER.info("load destination");
+        DestinationFactoryManager dfm = this.bus.getExtension(DestinationFactoryManager.class);
+        destinationFactory = new VertxDestinationFactory(Arrays.asList("http://cxf.apache.org/transports/quarkus"),
+                new DestinationRegistryImpl());
+        dfm.registerDestinationFactory("http://cxf.apache.org/transports/quarkus", destinationFactory);
+        ConduitInitiatorManager extension = bus.getExtension(ConduitInitiatorManager.class);
+        extension.registerConduitInitiator("http://cxf.apache.org/transports/quarkus", destinationFactory);
+        bus.setExtension(destinationFactory, HttpDestinationFactory.class);
+        this.destinationRegistry = destinationFactory.getRegistry();
+
         for (CXFServletInfo servletInfo : cxfServletInfos.getInfos()) {
             JaxWsServerFactoryBean factory = new JaxWsServerFactoryBean(
                     new QuarkusJaxWsServiceFactoryBean(cxfServletInfos.getWrappersclasses()));
+            factory.setDestinationFactory(destinationFactory);
             factory.setBus(bus);
             Object instanceService = getInstance(servletInfo.getClassName());
             if (instanceService != null) {
@@ -142,36 +160,6 @@ public class CxfHandler implements Handler<RoutingContext> {
         }
     }
 
-    protected DestinationRegistry getDestinationRegistryFromBusOrDefault() {
-        DestinationFactoryManager dfm = this.bus.getExtension(DestinationFactoryManager.class);
-        VertxDestinationFactory soapDF = new VertxDestinationFactory();
-        dfm.registerDestinationFactory("http://cxf.apache.org/transports/quarkus", soapDF);
-        try {
-            VertxDestinationFactory df = (VertxDestinationFactory) dfm
-                    .getDestinationFactory("http://cxf.apache.org/transports/quarkus");
-            return df.getRegistry();
-        } catch (BusException ex) {
-            //ignored
-        }
-        return null;
-    }
-
-    public Bus getBus() {
-        return this.bus;
-    }
-
-    public void init() {
-        if (this.bus == null && this.loadBus) {
-            this.bus = BusFactory.getDefaultBus();
-        }
-        if (this.bus != null) {
-            this.loader = this.bus.getExtension(ClassLoader.class);
-            if (this.destinationRegistry == null) {
-                this.destinationRegistry = this.getDestinationRegistryFromBusOrDefault();
-            }
-        }
-    }
-
     @Override
     public void handle(RoutingContext event) {
         ClassLoaderUtils.ClassLoaderHolder origLoader = null;
@@ -241,7 +229,13 @@ public class CxfHandler implements Handler<RoutingContext> {
         HttpServerRequest request = event.request();
         HttpServerResponse res = event.response();
         String pathInfo = request.path() == null ? "" : request.path();
-        AbstractHTTPDestination d = this.destinationRegistry.getDestinationForPath(pathInfo, true);
+        EndpointInfo ep = new EndpointInfo();
+        ep.setAddress(event.request().uri());
+        Destination d = null;
+        try {
+            d = destinationFactory.getDestination(ep, bus);
+        } catch (IOException e) {
+        }
         if (d == null) {
             if ((request.uri().endsWith(this.serviceListRelativePath)
                     || request.uri().endsWith(this.serviceListRelativePath + "/")
@@ -259,52 +253,14 @@ public class CxfHandler implements Handler<RoutingContext> {
             }
         }
 
-        if (d != null && d.getMessageObserver() != null) {
-            Bus bus = d.getBus();
-            ClassLoaderUtils.ClassLoaderHolder orig = null;
-
-            try {
-                if (bus != null) {
-                    ClassLoader loader = bus.getExtension(ClassLoader.class);
-                    if (loader == null) {
-                        ResourceManager manager = bus.getExtension(ResourceManager.class);
-                        if (manager != null) {
-                            loader = manager.resolveResource("", ClassLoader.class);
-                        }
-                    }
-
-                    if (loader != null) {
-                        orig = ClassLoaderUtils.setThreadContextClassloader(loader);
-                    }
-                }
-
-                this.updateDestination(request, d);
-                if (LOGGER.isTraceEnabled()) {
-                    LOGGER.trace("Service http request on thread: " + Thread.currentThread());
-                }
-
+        if (d != null) {
+            if (d instanceof VertxDestination) {
                 try {
-                    //todo call undertowDestination special invoke
-                    if (d instanceof VertxDestination) {
-                        try {
-                            ((VertxDestination) d).invoke(event);
-                        } catch (IOException e) {
-                            LOGGER.warn("failed to handler request on vertx " + e.toString());
-                        }
-                    }
-                } finally {
-                    if (LOGGER.isTraceEnabled()) {
-                        LOGGER.trace("Finished servicing http request on thread: " + Thread.currentThread());
-                    }
-
+                    ((VertxDestination) d).invoke(event);
+                } catch (IOException e) {
+                    LOGGER.warn("failed to handler request on vertx " + e.toString());
                 }
-            } finally {
-                if (orig != null) {
-                    orig.reset();
-                }
-
             }
         }
-
     }
 }

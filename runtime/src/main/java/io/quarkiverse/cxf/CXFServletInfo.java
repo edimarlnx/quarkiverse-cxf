@@ -3,14 +3,8 @@ package io.quarkiverse.cxf;
 import java.util.ArrayList;
 import java.util.List;
 
-import javax.enterprise.context.ApplicationScoped;
-
 import org.jboss.logging.Logger;
 
-import io.quarkus.arc.Unremovable;
-
-@ApplicationScoped
-@Unremovable
 public class CXFServletInfo {
     private String path;
     private String className;
